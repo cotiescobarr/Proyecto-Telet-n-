@@ -1,0 +1,1 @@
+Proyecto de Teleton. Proyecto de Game Boy accesible, enfocado en niños y jóvenes con diferentes niveles de GMFCS, buscando promover la inclusión mediante el juego adaptado y el diseño centrado en la accesibilidad. 
