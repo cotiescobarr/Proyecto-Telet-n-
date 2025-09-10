@@ -1,4 +1,4 @@
-i#include <LedControl.h>
+#include <LedControl.h>
 
 #define DIN 12
 #define CS 10
