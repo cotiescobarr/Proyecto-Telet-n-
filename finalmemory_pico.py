@@ -2,6 +2,7 @@
 # Raspberry Pi Pico - Memory Game con patrón múltiple y texto GANASTE deslizante
 # Cursor: 1 pixel, patrones aleatorios (3 a 6), 3 patrones completos seguidos para GANASTE
 
+
 from machine import Pin, SPI
 import time
 import random
@@ -28,74 +29,21 @@ cursor_x = 0
 cursor_y = 0
 grid_size = 3
 wins_in_a_row = 0
+selected_blocks = []  # bloques acertados que quedan encendidos
 
-# === Fuente 5x8 (filas) para letras G A N S T E ===
+# === Fuente 5x8 para GANASTE ===
 FONT_ROWS = {
-    'G': [
-        "01110",
-        "10001",
-        "10000",
-        "10111",
-        "10001",
-        "10001",
-        "01110",
-        "00000"
-    ],
-    'A': [
-        "01110",
-        "10001",
-        "10001",
-        "11111",
-        "10001",
-        "10001",
-        "10001",
-        "00000"
-    ],
-    'N': [
-        "10001",
-        "11001",
-        "10101",
-        "10011",
-        "10001",
-        "10001",
-        "10001",
-        "00000"
-    ],
-    'S': [
-        "01111",
-        "10000",
-        "01110",
-        "00001",
-        "00001",
-        "10001",
-        "01110",
-        "00000"
-    ],
-    'T': [
-        "11111",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-        "00000"
-    ],
-    'E': [
-        "11111",
-        "10000",
-        "11110",
-        "10000",
-        "10000",
-        "10000",
-        "11111",
-        "00000"
-    ],
-    ' ': [ "00000" ] * 8
+    'G': ["01110","10001","10000","10111","10001","10001","01110","00000"],
+    'A': ["01110","10001","10001","11111","10001","10001","10001","00000"],
+    'N': ["10001","11001","10101","10011","10001","10001","10001","00000"],
+    'S': ["01111","10000","01110","00001","00001","10001","01110","00000"],
+    'T': ["11111","00100","00100","00100","00100","00100","00100","00000"],
+    'E': ["11111","10000","11110","10000","10000","10000","11111","00000"],
+    ' ': ["00000"] * 8
 }
+tiempo_presionados = None
 
 def build_columns_from_rows(rows5):
-    """Convierte 8 filas de 5 bits en lista de columnas (bytes, MSB = row0)."""
     cols = []
     for c in range(5):
         b = 0
@@ -103,19 +51,13 @@ def build_columns_from_rows(rows5):
             if rows5[r][c] == '1':
                 b |= (1 << (7 - r))
         cols.append(b)
-    cols.append(0x00)  # columna de espacio entre letras
+    cols.append(0x00)
     return cols
 
-# Preconstruyo las columnas para cada letra necesaria
-FONT_COLS = {}
-for ch, rows in FONT_ROWS.items():
-    FONT_COLS[ch] = build_columns_from_rows(rows)
+FONT_COLS = {ch: build_columns_from_rows(rows) for ch, rows in FONT_ROWS.items()}
 
-# === Dibujo del tablero y elementos ===
-selected_blocks = []  # bloques acertados que deben permanecer encendidos
-
+# === Dibujo de tablero ===
 def draw_board_base():
-    """Dibuja solo las líneas divisorias (base). No muestra cursor ni seleccionados."""
     display.fill(0)
     for y in range(8):
         display.pixel(2, y, 1)
@@ -125,31 +67,41 @@ def draw_board_base():
         display.pixel(x, 5, 1)
 
 def draw_selected_blocks():
-    """Dibuja todos los bloques que el jugador ya acertó (se quedan prendidos)."""
     for (x, y) in selected_blocks:
         base_x = x * 3
         base_y = y * 3
-        for dx in [0,1]:
-            for dy in [0,1]:
+        for dx in [0, 1]:
+            for dy in [0, 1]:
                 display.pixel(base_x + dx, base_y + dy, 1)
 
 def draw_cursor_pixel(x, y):
-    """Dibuja el cursor como un solo pixel (no borra seleccionados)."""
     base_x = x * 3 + 1
     base_y = y * 3 + 1
     display.pixel(base_x, base_y, 1)
 
 def render_screen(show_cursor=True):
-    """Dibuja base + seleccionados + (opcional) cursor, y actualiza display."""
     draw_board_base()
     draw_selected_blocks()
     if show_cursor:
         draw_cursor_pixel(cursor_x, cursor_y)
     display.show()
+# Función para revisar si se mantiene presionado ambos extremos 3s
+def revisar_salida():
+    global tiempo_presionados
+    print(f"X:{btn_x.value()} Y:{btn_y.value()} t: {tiempo_presionados}")
 
-def flash_block(x, y, delay=0.25):
-    """Destella bloque completo 2x2 y luego vuelve al estado con seleccionados persistentes."""
-    # iluminar bloque
+    if not btn_x.value() and not btn_y.value():  # ambos presionados
+        if tiempo_presionados is None:
+            tiempo_presionados = time.ticks_ms()
+        elif time.ticks_diff(time.ticks_ms(), tiempo_presionados) > 3000:
+            print("🔙 Volviendo al menú...")
+            display.fill(0)
+            display.show()
+            return True
+    else:
+        tiempo_presionados = None
+    return False
+def flash_block(x, y, delay=0.12):
     base_x = x * 3
     base_y = y * 3
     for dx in [0,1]:
@@ -157,10 +109,8 @@ def flash_block(x, y, delay=0.25):
             display.pixel(base_x + dx, base_y + dy, 1)
     display.show()
     time.sleep(delay)
-    # volver a mostrar la pantalla normal (con seleccionados)
     render_screen(show_cursor=False)
 
-# === Mostrar patrón inicial (todos los bloques del patrón a la vez) ===
 def show_pattern(pattern):
     draw_board_base()
     for (x, y) in pattern:
@@ -171,56 +121,42 @@ def show_pattern(pattern):
                 display.pixel(base_x+dx, base_y+dy, 1)
     display.show()
     time.sleep(0.9)
-    # limpiar a base, lista de selected sigue vacía hasta que el jugador acierte
     render_screen()
 
-# === Versión compatible de random.sample ===
 def sample_compat(population, k):
     result = []
     temp = population[:]
     while len(result) < k and temp:
         choice = random.choice(temp)
         result.append(choice)
-        # remover la instancia elegida
-        for i,t in enumerate(temp):
-            if t == choice:
-                temp.pop(i)
-                break
+        temp.remove(choice)
     return result
 
 def generate_random_pattern():
-    total_blocks = random.randint(2, 4)  # <-- aquí cambié el rango
+    total_blocks = random.randint(2, 4)
     all_blocks = [(x, y) for x in range(3) for y in range(3)]
     return sample_compat(all_blocks, total_blocks)
 
-
-# === Texto GANASTE deslizante con font basada en FONT_COLS ===
 def show_message_ganaste():
-    # construir las columnas de la frase " GANASTE " (agrego espacios al inicio/final para entrada/salida)
     message = " GANASTE "
     columns = []
     for ch in message:
-        cols = FONT_COLS.get(ch, FONT_COLS[' '])
-        columns += cols
+        columns += FONT_COLS.get(ch, FONT_COLS[' '])
 
-    # desplazar de derecha a izquierda
     total = len(columns)
-    # offset empieza en 8 (pantalla completamente a la derecha) y baja hasta -total
-    for offset in range(8, -total-1, -1):
+    for offset in range(8, -total - 1, -1):
         display.fill(0)
         for col in range(8):
             src = col - offset
             if 0 <= src < total:
                 column = columns[src]
                 for row in range(8):
-                    if (column >> (7-row)) & 1:
+                    if (column >> (7 - row)) & 1:
                         display.pixel(col, row, 1)
         display.show()
         time.sleep(0.08)
-    # al terminar, volver a pantalla de juego
     render_screen()
 
-# === Movimiento del cursor (no borra seleccionados) ===
 def move_cursor(axis):
     global cursor_x, cursor_y
     if axis == 'x':
@@ -228,67 +164,92 @@ def move_cursor(axis):
     elif axis == 'y':
         cursor_y = (cursor_y + 1) % grid_size
 
-# === Inicialización ===
-render_screen()
-time.sleep(0.5)
-
-# === Bucle principal del juego ===
-while True:
-    # generar patrón nuevo
-    pattern = generate_random_pattern()
-    # limpiar seleccionados para la nueva ronda
-    selected_blocks = []
-    show_pattern(pattern)
-
-    user_hits = []
-
-    # repetir hasta completar patrón o fallar
+# === Bucle principal ===
+def memory():
+    global selected_blocks, wins_in_a_row
+    global tiempo_presionados
+    n = False
+    m = False
     while True:
-        # mostrar estado actual (cursor visible)
-        render_screen(show_cursor=True)
+        
+        pattern = generate_random_pattern()
+        selected_blocks = []  # limpiar encendidos al nuevo patrón
+        show_pattern(pattern)
+        user_hits = []
 
-        # manejo de botones
-        if not btn_x.value():
-            time.sleep(0.12)
-            move_cursor('x')
-            while not btn_x.value(): pass
 
-        if not btn_y.value():
-            time.sleep(0.12)
-            move_cursor('y')
-            while not btn_y.value(): pass
 
-        if not btn_sel.value():
-            pos = (cursor_x, cursor_y)
-            # si acierta una posición del patrón y aún no la había marcado
-            if pos in pattern and pos not in user_hits:
-                # agregar a aciertos y mantenerlo encendido
-                user_hits.append(pos)
-                selected_blocks.append(pos)
-                # efecto de confirmación
-                flash_block(cursor_x, cursor_y, delay=0.12)
-                # si completó todo el patrón
-                if set(user_hits) == set(pattern):
-                    wins_in_a_row += 1
-                    break
+        while True:
+            render_screen(show_cursor=True)
+            if m and n:
+                print("ee")
+                revisar_salida()
+                return  # volver al menú
+            
             else:
-                # falló: reiniciar la racha y salir para generar nuevo patrón
-                wins_in_a_row = 0
-                # efecto de error: parpadeo rápido de toda la matriz
-                for _ in range(2):
-                    display.fill(1)
-                    display.show()
+                if not btn_x.value():
+                    print("x")
                     time.sleep(0.12)
-                    render_screen()
-                    time.sleep(0.08)
-                break
+                    move_cursor('x')
+                    n=True
+                    while not btn_x.value(): pass
+                else:
+                    n=False
 
-            while not btn_sel.value(): pass
+                if not btn_y.value():
+                    print("y")
+                    m=True
+                    time.sleep(0.12)
+                    move_cursor('y')
+                    while not btn_y.value(): pass
+                else:
+                    m=False
 
-    # verificar GANASTE
-    if wins_in_a_row >= 3:
-        show_message_ganaste()
-        wins_in_a_row = 0
+            if not btn_sel.value():
+                pos = (cursor_x, cursor_y)
+                if pos in pattern and pos not in user_hits:
+                    user_hits.append(pos)
+                    selected_blocks.append(pos)  # ahora queda encendido
+                    render_screen(show_cursor=False)
+                    flash_block(cursor_x, cursor_y, delay=0.12)
 
-    # pequeña pausa antes del siguiente patrón
-    time.sleep(0.25)
+                    if set(user_hits) == set(pattern):
+                        wins_in_a_row += 1
+                        break
+                else:
+                    wins_in_a_row = 0
+                    for _ in range(2):
+                        display.fill(1)
+                        display.show()
+                        time.sleep(0.12)
+                        render_screen()
+                        time.sleep(0.08)
+                    break
+
+                while not btn_sel.value(): pass
+
+        if wins_in_a_row >= 5:
+            show_message_ganaste()
+            print("ee2")
+            revisar_salida()
+            return  # volver al menú
+            wins_in_a_row = 0
+
+        time.sleep(0.25)
+
+# === Inicio ===
+# render_screen()
+# time.sleep(0.5)
+# memory()
+
+
+
+
+def main():
+    memory()
+
+# === Ejecución ===
+if __name__=="__main__":
+    main()
+
+
